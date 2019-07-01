@@ -25,6 +25,9 @@
  (for-syntax racket/base)
  (for-template racket/base racket/contract (utils any-wrap)))
 
+;; for scv-gt
+(require scv-gt/private/syntax-typed-racket)
+
 (provide
   (c:contract-out
     [type->static-contract
@@ -81,80 +84,82 @@
 ;; This saves computation time and zo space for excessively large types
 ;; (such as mutually recursive class types).
 (define (generate-contract-def stx cache sc-cache)
-  (define prop (get-contract-def-property stx))
-  (match-define (contract-def type-stx flat? maker? typed-side) prop)
-  (define *typ (if type-stx (parse-type type-stx) t:-Dead-Code))
-  (define kind (if (and type-stx flat?) 'flat 'impersonator))
-  (syntax-parse stx #:literals (define-values)
-    [(define-values (n) _)
-     (define typ
-       (cond [maker?
-              (match (lookup-type-name (Name-id *typ))
-                [(Poly-names: names body)
-                 (make-Poly names
-                   ((map fld-t (Struct-flds body)) #f . t:->* . *typ))]
-                [ty
-                 ((map fld-t (Struct-flds ty)) #f . t:->* . *typ)])]
-             [else *typ]))
-     (match-define (list defs ctc)
-       (type->contract
-        typ
-        ;; this value is from the typed side (require/typed, make-predicate, etc)
-        ;; unless it's used for with-type
-        #:typed-side (from-typed? typed-side)
-        #:kind kind
-        #:cache cache
-        #:sc-cache sc-cache
-        (type->contract-fail
-         typ type-stx
-         #:ctc-str (if flat? "predicate" "contract"))))
-     (ignore ; should be ignored by the optimizer
-      (quasisyntax/loc stx
-        (begin #,@defs (define-values (n) #,ctc))))]
-    [_ (int-err "should never happen - not a define-values: ~a"
-                (syntax->datum stx))]))
+  (syntax-property-self* 'require
+    (define prop (get-contract-def-property stx))
+    (match-define (contract-def type-stx flat? maker? typed-side) prop)
+    (define *typ (if type-stx (parse-type type-stx) t:-Dead-Code))
+    (define kind (if (and type-stx flat?) 'flat 'impersonator))
+    (syntax-parse stx #:literals (define-values)
+      [(define-values (n) _)
+       (define typ
+         (cond [maker?
+                (match (lookup-type-name (Name-id *typ))
+                  [(Poly-names: names body)
+                   (make-Poly names
+                     ((map fld-t (Struct-flds body)) #f . t:->* . *typ))]
+                  [ty
+                   ((map fld-t (Struct-flds ty)) #f . t:->* . *typ)])]
+               [else *typ]))
+       (match-define (list defs ctc)
+         (type->contract
+          typ
+          ;; this value is from the typed side (require/typed, make-predicate, etc)
+          ;; unless it's used for with-type
+          #:typed-side (from-typed? typed-side)
+          #:kind kind
+          #:cache cache
+          #:sc-cache sc-cache
+          (type->contract-fail
+           typ type-stx
+           #:ctc-str (if flat? "predicate" "contract"))))
+       (ignore ; should be ignored by the optimizer
+        (quasisyntax/loc stx
+          (begin #,@defs (define-values (n) #,ctc))))]
+      [_ (int-err "should never happen - not a define-values: ~a"
+                  (syntax->datum stx))])))
 
 ;; Generate a contract for a TR provide form
 (define (generate-contract-def/provide stx cache sc-cache)
-  (match-define (list type untyped-id orig-id blame-id)
-                (contract-def/provide-property stx))
-  (define failure-reason #f)
-  (define result
-    (type->contract type
-                    #:typed-side #t
-                    #:kind 'impersonator
-                    #:cache cache
-                    #:sc-cache sc-cache
-                    ;; FIXME: get rid of this interface, make it functional
-                    (λ (#:reason [reason #f]) (set! failure-reason reason))))
-  (syntax-parse stx
-    #:literal-sets (kernel-literals)
-    [(define-values (ctc-id) _)
-     ;; no need for ignore, the optimizer doesn't run on this code
-     (cond [failure-reason
-            #`(define-syntax (#,untyped-id stx)
-                (tc-error/fields #:stx stx
-                                 "could not convert type to a contract"
-                                 #:more #,failure-reason
-                                 "identifier" #,(symbol->string (syntax-e orig-id))
-                                 "type" #,(pretty-format-rep type #:indent 8)))]
-           [else
-            (match-define (list defs ctc) result)
-            (define maybe-inline-val
-              (should-inline-contract?/cache ctc cache))
-            #`(begin #,@defs
-                     #,@(if maybe-inline-val
-                            null
-                            (list #`(define-values (ctc-id) #,ctc)))
-                     (define-module-boundary-contract #,untyped-id
-                       #,orig-id
-                       #,(or maybe-inline-val #'ctc-id)
-                       #:pos-source #,blame-id
-                       #:srcloc (vector (quote #,(syntax-source orig-id))
-                                        #,(syntax-line orig-id)
-                                        #,(syntax-column orig-id)
-                                        #,(syntax-position orig-id)
-                                        #,(syntax-span orig-id))))])]))
+  (syntax-property-self* 'provide
+    (match-define (list type untyped-id orig-id blame-id)
+                  (contract-def/provide-property stx))
+    (define failure-reason #f)
+    (define result
+      (type->contract type
+                      #:typed-side #t
+                      #:kind 'impersonator
+                      #:cache cache
+                      #:sc-cache sc-cache
+                      ;; FIXME: get rid of this interface, make it functional
+                      (λ (#:reason [reason #f]) (set! failure-reason reason))))
+    (syntax-parse stx
+      #:literal-sets (kernel-literals)
+      [(define-values (ctc-id) _)
+       ;; no need for ignore, the optimizer doesn't run on this code
+       (cond [failure-reason
+              #`(define-syntax (#,untyped-id stx)
+                  (tc-error/fields #:stx stx
+                                   "could not convert type to a contract"
+                                   #:more #,failure-reason
+                                   "identifier" #,(symbol->string (syntax-e orig-id))
+                                   "type" #,(pretty-format-rep type #:indent 8)))]
+             [else
+              (match-define (list defs ctc) result)
+              (define maybe-inline-val
+                (should-inline-contract?/cache ctc cache))
+              #`(begin #,@defs
+                       #,@(if maybe-inline-val
+                              null
+                              (list #`(define-values (ctc-id) #,ctc)))
+                       (define-module-boundary-contract #,untyped-id
+                         #,orig-id
+                         #,(or maybe-inline-val #'ctc-id)
+                         #:pos-source #,blame-id
+                         #:srcloc (vector (quote #,(syntax-source orig-id))
+                                          #,(syntax-line orig-id)
+                                          #,(syntax-column orig-id)
+                                          #,(syntax-position orig-id)
+                                          #,(syntax-span orig-id))))])])))
 
 ;; Syntax (Dict Static-Contract (Cons Id Syntax)) -> (Option Syntax)
 ;; A helper for generate-contract-def/provide that helps inline contract
@@ -215,7 +220,7 @@
         (generate-contract-def/provide form ctc-cache sc-cache)]
        [(module* name #f forms ...)
         (quasisyntax/loc form
-          (module* name #f 
+          (module* name #f
             #,@(change-provide-fixups (syntax->list #'(forms ...))
                                       ctc-cache sc-cache)))]
        [((~literal #%plain-module-begin) forms ...)
@@ -588,7 +593,7 @@
            (define untyped (rec b 'untyped rv))
            (define typed (rec b 'typed rv))
            (define both (rec b 'both rv))
-           
+
            (recursive-sc
             n*s
             (list untyped typed both)
@@ -676,13 +681,13 @@
        [(Unit: imports exports init-depends results)
         (define (traverse sigs)
           (for/list ([sig (in-list sigs)])
-            (define mapping 
+            (define mapping
               (map
-               (match-lambda 
+               (match-lambda
                  [(cons id type) (cons id (t->sc type))])
                (Signature-mapping sig)))
             (signature-spec (Signature-name sig) (map car mapping) (map cdr mapping))))
-        
+
         (define imports-specs (traverse imports))
         (define exports-specs (traverse exports))
         (define init-depends-ids (map Signature-name init-depends))
@@ -712,7 +717,7 @@
                                "untyped code"))
             (struct-type/sc null))]
        [(Prefab: key (list (app t->sc fld/scs) ...)) (prefab/sc key fld/scs)]
-       [(PrefabTop: key) 
+       [(PrefabTop: key)
         (flat/sc #`(struct-type-make-predicate
                     (prefab-key->struct-type (quote #,(abbreviate-prefab-key key))
                                              #,(prefab-key->field-count key))))]
@@ -1160,7 +1165,7 @@
                      (and (inexact-real? (imag-part x))
                           (inexact-real? (real-part x)))))))
   (define number/sc (numeric/sc Number number?))
-  
+
   (define extflonum-zero/sc (numeric/sc ExtFlonum-Zero (and/c extflonum? extflzero?)))
   (define nonnegative-extflonum/sc (numeric/sc Nonnegative-ExtFlonum (and/c extflonum? extflnonnegative?)))
   (define nonpositive-extflonum/sc (numeric/sc Nonpositive-ExtFlonum (and/c extflonum? extflnonpositive?)))
@@ -1221,5 +1226,3 @@
     [(== t:-NonPosExtFlonum) nonpositive-extflonum/sc]
     [(== t:-ExtFlonum) extflonum/sc]
     [else #f]))
-
-
