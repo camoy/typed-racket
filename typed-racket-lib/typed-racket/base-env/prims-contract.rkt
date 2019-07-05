@@ -12,7 +12,7 @@
 ;;
 ;; - their implementations (under the same names) are defined at phase
 ;;   0 using `define` in the main module
-;; 
+;;
 ;; - the `forms` submodule uses `lazy-require` to load the
 ;;   implementations of the forms
 
@@ -24,7 +24,7 @@
 
 (module forms racket/base
   (require (for-syntax racket/lazy-require racket/base))
-  (begin-for-syntax 
+  (begin-for-syntax
     (lazy-require [(submod "..")
                    (require/opaque-type
                     require-typed-signature
@@ -301,15 +301,15 @@
          ;; We want the value bound to name to have a nice object name. Using the built in mechanism
          ;; of define has better performance than procedure-rename.
          #,(ignore
-            (syntax/loc stx
+            (quasisyntax/loc stx
               (define name
-                (let ([pred (make-predicate ty)])
+                (let ([pred #,(make-predicate #'(make-predicate ty)
+                                              #:source stx)])
                   (lambda (x) (pred x))))))
          ;; not a require, this is just the unchecked declaration syntax
          #,(internal (syntax/loc stx (require/typed-internal name (Any -> Boolean : ty)))))]))
 
-
-(define (make-predicate stx)
+(define (make-predicate stx #:source [src #f])
   (syntax-parse stx
     [(_ ty:expr)
      (define name (syntax-local-lift-expression
@@ -322,8 +322,11 @@
          (tc-error/delayed
           "Type ~a could not be converted to a predicate because it contains free variables."
           type)))
-     #`(#,(external-check-property #'#%expression check-valid-type)
-        #,(ignore-some/expr #`(flat-contract-predicate #,name) #'(Any -> Boolean : ty)))]))
+     (syntax-property
+      #`(#,(external-check-property #'#%expression check-valid-type)
+         #,(ignore-some/expr #`(flat-contract-predicate #,name) #'(Any -> Boolean : ty)))
+      'make-predicate
+      (list (cons (or src stx) name)))]))
 
 ;; wrapped above in the `forms` submodule
 (define (core-cast stx)
