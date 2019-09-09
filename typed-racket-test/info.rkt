@@ -11,7 +11,8 @@
                "rackunit-lib"
                "racket-index"
                "compatibility-lib"
-               "math-lib"))
+               "math-lib"
+               "racket-test-core"))
 (define build-deps '("scheme-lib"
                      "base"
                      "racket-benchmarks"

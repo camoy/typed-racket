@@ -31,10 +31,11 @@
                                 [Un t:Un]
                                 [-> t:->])))
 
+#reader typed-racket/typed-reader
+
 (define tests
   (test-suite
    "class typechecking tests"
-   #reader typed-racket/typed-reader
    ;; Basic class with init and public method
    [tc-e (let ()
            (: c% (Class (init [x Integer])
@@ -1406,7 +1407,7 @@
              (: x String)
              (field [x : Symbol 0]))
            #:ret (tc-ret (-class #:field ([x -String])))
-           #:msg #rx"duplicate type annotation.*new type: Symbol"]
+           #:msg #rx"(duplicate type annotation.*new type: Symbol)|(expected: \\(U Integer String\\))"]
    ;; fails, expected type and annotation don't match
    [tc-err (let ()
              (: c% (Class (field [x String])))
@@ -2136,6 +2137,22 @@
               (super-new)))
           (void))
         -Void]
+  ;; Tests for GH issue #829, use of type label property
+  [tc-e (let ()
+          (class object%
+            (super-new)
+            (define-values (#{x : (U String Integer)}) 1)
+            (when (string? x)
+              (displayln (string-append x "bar"))))
+          (void))
+        -Void]
+  [tc-err (let ()
+            (class object%
+              (super-new)
+              (define-values (#{x : Symbol}) 'foo)
+              (: x (U String Integer)))
+            (error "foo"))
+          #:msg #rx"(expected:.*U Integer String)|(duplicate type annotation.*new type: Symbol)"]
 
   ;; contract-stronger / contract-equivalent tests
   (let ([ctc-empty (sealing->/c A (() () ()) values)]

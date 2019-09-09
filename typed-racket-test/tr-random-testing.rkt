@@ -4,7 +4,7 @@
 
 (require redex/reduction-semantics
          racket/flonum racket/unsafe/ops
-         racket/sandbox racket/cmdline
+         racket/runtime-path racket/sandbox racket/cmdline
          "random-real.rkt")
 
 (require typed-racket/utils/utils
@@ -24,7 +24,7 @@
   [n real]
   ;; randomly generate F, not E, because literal numbers self-evaluate
   ;; (i.e. generates a useless test)
-  [E* n E F S I]
+  [E* n E F I]
   ;; racket/math
   ;; [E (degrees->radians E)
   ;;    (radians->degrees E)
@@ -54,6 +54,8 @@
      (sin F*)
      (tan F*)
      (sqr F*)
+     (real->double-flonum F*)
+     (exact->inexact F*)
      (flabs F*)
      (flround F*)
      (flfloor F*)
@@ -83,10 +85,6 @@
      (unsafe-fl- F* F*)
      (unsafe-fl* F* F*)
      (unsafe-fl/ F* F*)]
-  ;; not many single-flonum-specific ops, so will mostly be used in E context
-  [S (real->single-flonum n)
-     (inexact->exact S)
-     (real->double-flonum S)]
   ;; more likely to be integers
   [I* (exact-round n) I] ; TODO fix pre-processing to avoid cast
   [I (* I* ...)
@@ -117,6 +115,7 @@
      (bitwise-xor I* ...)
      (bitwise-not I*)
      (integer-length I*)
+     (inexact->exact I*)
      ]
   [E (* E* ...)
      (+ E* ...)
@@ -161,7 +160,8 @@
            ;; not a problem, we generate those specially
            (if (rational? E)
                E
-               0)))] ; arbitrary
+               0)) ; arbitrary
+          racketcs-available?)] ; if so, don't generate single-flonums
         [(list? E)
          (map exp->real-exp E)]
         [else
@@ -201,6 +201,25 @@
 (define racket-eval (mk-eval 'racket))
 (define tr-eval     (mk-eval 'typed/racket))
 
+(define-values (bin-dir _1 _2) (split-path (find-system-path 'exec-file)))
+(define racketcs (build-path bin-dir "racketcs"))
+(define-runtime-path racketcs-harness "./racketcs-eval-server.rkt")
+(define-values (rcs-process rcs-out rcs-in rcs-err)
+  (cond [(file-exists? racketcs)
+         (subprocess #f #f #f racketcs racketcs-harness)]
+        [else
+         (eprintf "WARNING: did not find racketcs executable\n")
+         (values #f #f #f #f)]))
+(define racketcs-available? (and rcs-process #t))
+
+(define (racketcs-eval sexp)
+  (writeln sexp rcs-in)
+  (flush-output rcs-in)
+  (define result (read rcs-out))
+  (if (string? result)
+      (error 'racketcs-eval result)
+      result))
+
 (define (same-result-as-untyped? sexp)
   (define racket-failed?  #f)
   (define both-failed?    #f)
@@ -221,11 +240,33 @@
            ;; for NaN, which is not = to itself
            (equal? racket-result tr-result))))
 
+(define (same-result-as-racketcs? sexp)
+  (define racket-failed?   #f)
+  (define both-failed?     #f)
+  (define racket-result
+    (with-handlers ([exn? (λ (e) (set! racket-failed? #t))])
+      (racket-eval sexp)))
+  (define racketcs-result
+    (with-handlers ([exn:fail:filesystem:errno?
+                     (λ (e)
+                       ;; intermittently ends up with a broken pipe between us
+                       ;; and the racketcs server. I have not been able to
+                       ;; narrow it down
+                       ;; TODO instead, could pre-emptively restart racketcs
+                       ;;   process every ~200 tests
+                       (eprintf "broken pipe, aborting\n")
+                       (raise e))] ; just give up on the rest of this run
+                    [exn? (λ (e) (when racket-failed?
+                                   (set! both-failed? #t)))])
+      (racketcs-eval sexp)))
+  (or both-failed?
+      (and (not racket-failed?)
+           (equal? racket-result racketcs-result))))
 
 (define num-exceptions 0)
 
 (define (check-all-reals sexp [verbose? #f])
-  ;; because some of the generated expressions comute gigantic bignums, running
+  ;; because some of the generated expressions compute gigantic bignums, running
   ;; out of resources is expected, so just ignore that case
   (with-handlers ([exn:fail:resource? values])
     (with-limits
@@ -240,9 +281,12 @@
            (get-type sexp)
            #f) ; go on and check properties
          (and (right-type? sexp)
-              (same-result-as-untyped? sexp))))))
+              (same-result-as-untyped? sexp)
+              (if racketcs-available?
+                  (same-result-as-racketcs? sexp)
+                  #t))))))
 
-(module+ main
+(define (run-tests)
   (define n-attempts 1000)
   (define seed       (+ 1 (random (expt 2 30))))
   (define verbose?   #f)
@@ -277,7 +321,11 @@
 
   (printf "bad tests (usually typechecking failed): ~v~n" num-exceptions))
 
+(module+ main
+  (run-tests))
+
 (module+ test
   (module config info
     (define timeout 600)
-    (define random? #t)))
+    (define random? #t))
+  (run-tests))
