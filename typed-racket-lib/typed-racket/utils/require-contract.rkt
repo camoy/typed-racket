@@ -7,6 +7,9 @@
          (for-syntax racket/base
                      syntax/parse))
 
+;; for scv-cr
+(require (for-syntax scv-cr/private/syntax-typed-racket))
+
 (provide require/contract define-ignored rename-without-provide)
 
 (define-syntax (define-ignored stx)
@@ -43,25 +46,26 @@
 ;; nm will be bound to a rename transformer so that it is not provided
 ;; with all-defined-out
 (define-syntax (require/contract stx)
-  (define-syntax-class renameable
-    (pattern nm:id
-             #:with orig-nm #'nm
-             #:with orig-nm-r ((make-syntax-introducer) #'nm))
-    (pattern (orig-nm:id nm:id)
-             #:with orig-nm-r ((make-syntax-introducer) #'nm)))
+  (syntax-property-self* 'require-rename
+    (define-syntax-class renameable
+      (pattern nm:id
+               #:with orig-nm #'nm
+               #:with orig-nm-r ((make-syntax-introducer) #'nm))
+      (pattern (orig-nm:id nm:id)
+               #:with orig-nm-r ((make-syntax-introducer) #'nm)))
 
-  (syntax-parse stx
-    [(require/contract nm:renameable hidden:id cnt lib)
-     #`(begin (require (only-in lib [nm.orig-nm nm.orig-nm-r]))
-              (rename-without-provide nm.nm hidden)
+    (syntax-parse stx
+      [(require/contract nm:renameable hidden:id cnt lib)
+       #`(begin (require (only-in lib [nm.orig-nm nm.orig-nm-r]))
+                (rename-without-provide nm.nm hidden)
 
-              (define-ignored hidden
-                (contract cnt
-                          #,(get-alternate #'nm.orig-nm-r)
-                          '(interface for #,(syntax->datum #'nm.nm))
-                          (current-contract-region)
-                          (quote nm.nm)
-                          (quote-srcloc nm.nm))))]))
+                (define-ignored hidden
+                  (contract cnt
+                            #,(get-alternate #'nm.orig-nm-r)
+                            '(interface for #,(syntax->datum #'nm.nm))
+                            (current-contract-region)
+                            (quote nm.nm)
+                            (quote-srcloc nm.nm))))])))
 
 ;; identifier -> identifier
 ;; get the alternate field of the renaming, if it exists

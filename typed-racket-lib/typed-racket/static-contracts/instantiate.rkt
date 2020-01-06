@@ -53,7 +53,8 @@
                       #f))]
       (compute-recursive-kinds
         (contract-restrict-recursive-values (compute-constraints sc kind)))))
-  (define sc/opt (optimize sc #:trusted-positive trusted-positive #:trusted-negative trusted-negative #:recursive-kinds recursive-kinds))
+  #;(define sc/opt (optimize sc #:trusted-positive trusted-positive #:trusted-negative trusted-negative #:recursive-kinds recursive-kinds))
+  (define sc/opt sc)
   (instantiate sc/opt fail kind #:cache cache #:recursive-kinds recursive-kinds))
 
 ;; kind is the greatest kind of contract that is supported, if a greater kind would be produced the
