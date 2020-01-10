@@ -551,7 +551,7 @@
                                   (make-struct-info-self-ctor #'internal-maker si)
                                   si))
 
-                         (dtsi* (tvar ...) spec type (body ...) #:maker maker-name #:type-only)
+                         (dtsi* (tvar ...) spec type (body ...) #:maker maker-name)
                          #,(ignore #'(require/contract pred hidden (or/c struct-predicate-procedure?/c (c-> any-wrap/c boolean?)) lib))
                          #,(internal #'(require/typed-internal hidden (Any -> Boolean : type)))
                          (require/typed #:internal (maker-name real-maker) type lib
